@@ -1,6 +1,7 @@
 """
 图片生成工作流 - LangGraph实现
 支持 text2img, img2img, mixed 三种模式，包含质量检查和自动重试
+支持电商平台特定规范
 """
 from typing import TypedDict, List, Optional, Dict, Any
 from langgraph.graph import StateGraph, END
@@ -19,6 +20,7 @@ class ImageGenerationState(TypedDict):
     negative_prompt: str
     reference_image: Optional[str]
     mode: str  # text2img / img2img / mixed
+    platform: str  # amazon / temu / default
     
     # 控制参数
     quality_threshold: float
@@ -44,7 +46,7 @@ class ImageGenerationState(TypedDict):
 
 
 class ImageGenerationWorkflow:
-    """电商图片生成工作流"""
+    """电商图片生成工作流（支持多平台规范）"""
     
     def __init__(self):
         self.app = self._build_workflow()
@@ -94,7 +96,7 @@ class ImageGenerationWorkflow:
     
     def preprocess_node(self, state: ImageGenerationState) -> Dict:
         """节点1: 预处理参考图片"""
-        logger.info(f"Preprocessing image for mode: {state['mode']}")
+        logger.info(f"Preprocessing image for mode: {state['mode']}, platform: {state.get('platform', 'default')}")
         
         try:
             if state.get("reference_image") and state["mode"] in ["img2img", "mixed"]:
@@ -104,7 +106,8 @@ class ImageGenerationWorkflow:
                     "preprocessed_image": processed,
                     "metadata": {
                         **state.get("metadata", {}),
-                        "preprocessing_status": "completed"
+                        "preprocessing_status": "completed",
+                        "platform": state.get("platform", "default")
                     }
                 }
             else:
@@ -112,7 +115,8 @@ class ImageGenerationWorkflow:
                     "preprocessed_image": None,
                     "metadata": {
                         **state.get("metadata", {}),
-                        "preprocessing_status": "skipped"
+                        "preprocessing_status": "skipped",
+                        "platform": state.get("platform", "default")
                     }
                 }
         except Exception as e:
@@ -122,13 +126,15 @@ class ImageGenerationWorkflow:
                 "error_message": f"预处理失败: {str(e)}",
                 "metadata": {
                     **state.get("metadata", {}),
-                    "preprocessing_status": "failed"
+                    "preprocessing_status": "failed",
+                    "platform": state.get("platform", "default")
                 }
             }
     
     def generate_node(self, state: ImageGenerationState) -> Dict:
         """节点2: 生成图片"""
-        logger.info(f"Generating images (iteration {state.get('iteration_count', 0) + 1})")
+        platform = state.get("platform", "default")
+        logger.info(f"Generating images (iteration {state.get('iteration_count', 0) + 1}) for platform: {platform}")
         
         try:
             mode = state["mode"]
@@ -168,7 +174,7 @@ class ImageGenerationWorkflow:
             else:
                 raise ValueError(f"不支持的生成模式: {mode}")
             
-            logger.info(f"Generated {len(images)} images")
+            logger.info(f"Generated {len(images)} images for {platform}")
             
             return {
                 "generated_images": images,
@@ -176,7 +182,8 @@ class ImageGenerationWorkflow:
                 "metadata": {
                     **state.get("metadata", {}),
                     "generation_mode": mode,
-                    "generation_status": "completed"
+                    "generation_status": "completed",
+                    "platform": platform
                 }
             }
             
@@ -189,8 +196,9 @@ class ImageGenerationWorkflow:
             }
     
     def quality_check_node(self, state: ImageGenerationState) -> Dict:
-        """节点3: 质量检查"""
-        logger.info("Running quality check...")
+        """节点3: 质量检查（支持平台特定规范）"""
+        platform = state.get("platform", "default")
+        logger.info(f"Running quality check for platform: {platform}...")
         
         try:
             if not state.get("generated_images"):
@@ -207,16 +215,22 @@ class ImageGenerationWorkflow:
             for i, image_url in enumerate(state["generated_images"]):
                 eval_result = reviewer.evaluate_image_quality(
                     image_url=image_url,
-                    product_type=""
+                    product_type="",
+                    platform=platform
                 )
                 
                 try:
                     eval_data = json.loads(eval_result)
                     score = eval_data.get("overall_score", 0.5)
-                    scores.append(score)
+                    platform_compliance = eval_data.get("platform_compliance", 0.7)
+                    
+                    # 综合评分 = 整体评分 * 0.6 + 平台合规性 * 0.4
+                    combined_score = score * 0.6 + platform_compliance * 0.4
+                    
+                    scores.append(combined_score)
                     evaluations.append(eval_data)
                     
-                    logger.info(f"Image {i+1} score: {score:.2f}")
+                    logger.info(f"Image {i+1} - Overall: {score:.2f}, Platform Compliance: {platform_compliance:.2f}, Combined: {combined_score:.2f}")
                 except:
                     scores.append(0.5)
                     evaluations.append({})
@@ -224,7 +238,7 @@ class ImageGenerationWorkflow:
             best_score = max(scores) if scores else 0
             best_idx = scores.index(best_score)
             
-            logger.info(f"Quality check completed. Best score: {best_score:.2f}")
+            logger.info(f"Quality check completed for {platform}. Best combined score: {best_score:.2f}")
             
             return {
                 "quality_scores": scores,
@@ -232,7 +246,8 @@ class ImageGenerationWorkflow:
                     **state.get("metadata", {}),
                     "evaluations": evaluations,
                     "best_score": best_score,
-                    "best_index": best_idx
+                    "best_index": best_idx,
+                    "platform": platform
                 }
             }
             
@@ -245,6 +260,7 @@ class ImageGenerationWorkflow:
     
     def decide_next_step(self, state: ImageGenerationState) -> str:
         """决策函数: 决定下一步操作"""
+        platform = state.get("platform", "default")
         
         # 检查是否有错误
         if state.get("error_message"):
@@ -255,21 +271,24 @@ class ImageGenerationWorkflow:
         max_retries = state.get("max_retries", settings.MAX_IMAGE_GENERATION_RETRIES)
         
         if current_iteration >= max_retries:
-            logger.warning(f"Reached max retries ({max_retries}), accepting current result")
+            logger.warning(f"Reached max retries ({max_retries}) for {platform}, accepting current result")
             return "accept"
         
         # 检查质量分数
         quality_scores = state.get("quality_scores", [])
-        quality_threshold = state.get("quality_threshold", settings.QUALITY_THRESHOLD)
+        
+        # 获取平台特定的质量阈值
+        platform_config = settings.PLATFORM_PRESETS.get(platform, settings.PLATFORM_PRESETS["default"])
+        quality_threshold = state.get("quality_threshold", platform_config.get('quality_threshold', settings.QUALITY_THRESHOLD))
         
         if quality_scores:
             best_score = max(quality_scores)
             
             if best_score >= quality_threshold:
-                logger.info(f"Best score {best_score:.2f} meets threshold {quality_threshold}")
+                logger.info(f"Best score {best_score:.2f} meets {platform} threshold {quality_threshold}")
                 return "accept"
             else:
-                logger.info(f"Best score {best_score:.2f} below threshold, regenerating...")
+                logger.info(f"Best score {best_score:.2f} below {platform} threshold, regenerating...")
                 return "regenerate"
         
         # 默认接受
@@ -277,11 +296,15 @@ class ImageGenerationWorkflow:
     
     def regenerate_node(self, state: ImageGenerationState) -> Dict:
         """节点4: 重新生成（调整参数）"""
-        logger.info("Regenerating with adjusted parameters...")
+        platform = state.get("platform", "default")
+        logger.info(f"Regenerating with adjusted parameters for {platform}...")
         
-        # 调整提示词以增强细节
+        # 获取平台配置
+        platform_config = settings.PLATFORM_PRESETS.get(platform, settings.PLATFORM_PRESETS["default"])
+        
+        # 调整提示词以增强细节并符合平台要求
         original_prompt = state["prompt"]
-        enhanced_prompt = f"{original_prompt}, highly detailed, professional photography, 8k, sharp focus"
+        enhanced_prompt = f"{original_prompt}, {platform_config['style_keywords']}, highly detailed, professional photography, 8k, sharp focus"
         
         return {
             "prompt": enhanced_prompt,
@@ -289,13 +312,15 @@ class ImageGenerationWorkflow:
             "metadata": {
                 **state.get("metadata", {}),
                 "regeneration_reason": "quality_below_threshold",
-                "prompt_enhanced": True
+                "prompt_enhanced": True,
+                "platform": platform
             }
         }
     
     def post_process_node(self, state: ImageGenerationState) -> Dict:
         """节点5: 后处理"""
-        logger.info("Post-processing images...")
+        platform = state.get("platform", "default")
+        logger.info(f"Post-processing images for {platform}...")
         
         try:
             if not state.get("generated_images"):
@@ -326,7 +351,7 @@ class ImageGenerationWorkflow:
                 # 上传最佳图片
                 selected_url = self.image_service.upload_to_minio(enhanced_image)
                 
-                logger.info(f"Selected and enhanced best image (score: {max(quality_scores):.2f})")
+                logger.info(f"Selected and enhanced best image for {platform} (score: {max(quality_scores):.2f})")
                 logger.info(f"Uploaded {len(uploaded_urls)} images to MinIO")
                 
                 return {
@@ -339,7 +364,8 @@ class ImageGenerationWorkflow:
                         "best_quality_score": max(quality_scores),
                         "post_processing": "completed",
                         "storage_type": "minio",
-                        "image_urls": uploaded_urls
+                        "image_urls": uploaded_urls,
+                        "platform": platform
                     }
                 }
             else:
@@ -353,7 +379,8 @@ class ImageGenerationWorkflow:
                     "metadata": {
                         **state.get("metadata", {}),
                         "post_processing": "no_quality_data",
-                        "storage_type": "minio"
+                        "storage_type": "minio",
+                        "platform": platform
                     }
                 }
         
@@ -367,14 +394,16 @@ class ImageGenerationWorkflow:
     
     def error_handler_node(self, state: ImageGenerationState) -> Dict:
         """节点6: 错误处理"""
-        logger.error(f"Workflow error: {state.get('error_message')}")
+        platform = state.get("platform", "default")
+        logger.error(f"Workflow error for {platform}: {state.get('error_message')}")
         
         return {
             "success": False,
             "error_message": state.get("error_message", "未知错误"),
             "metadata": {
                 **state.get("metadata", {}),
-                "workflow_status": "failed"
+                "workflow_status": "failed",
+                "platform": platform
             }
         }
     
@@ -384,6 +413,7 @@ class ImageGenerationWorkflow:
         negative_prompt: str = "",
         reference_image: Optional[str] = None,
         mode: str = "text2img",
+        platform: str = "default",
         quality_threshold: float = None,
         max_retries: int = None
     ) -> Dict[str, Any]:
@@ -395,6 +425,7 @@ class ImageGenerationWorkflow:
             negative_prompt: 负向提示词
             reference_image: 参考图片URL
             mode: 生成模式 (text2img/img2img/mixed)
+            platform: 目标平台 (amazon/temu/default)
             quality_threshold: 质量阈值
             max_retries: 最大重试次数
             
@@ -402,12 +433,16 @@ class ImageGenerationWorkflow:
             工作流执行结果
         """
         
+        # 获取平台特定的质量阈值
+        platform_config = settings.PLATFORM_PRESETS.get(platform, settings.PLATFORM_PRESETS["default"])
+        
         initial_state = {
             "prompt": prompt,
             "negative_prompt": negative_prompt,
             "reference_image": reference_image,
             "mode": mode,
-            "quality_threshold": quality_threshold or settings.QUALITY_THRESHOLD,
+            "platform": platform,
+            "quality_threshold": quality_threshold or platform_config.get('quality_threshold', settings.QUALITY_THRESHOLD),
             "max_retries": max_retries or settings.MAX_IMAGE_GENERATION_RETRIES,
             "optimized_prompt": {},
             "preprocessed_image": None,
@@ -422,14 +457,14 @@ class ImageGenerationWorkflow:
         }
         
         try:
-            logger.info(f"Starting workflow with mode={mode}")
+            logger.info(f"Starting workflow with mode={mode}, platform={platform}")
             result = self.app.invoke(initial_state)
             
-            logger.info(f"Workflow completed. Success: {result.get('success')}")
+            logger.info(f"Workflow completed for {platform}. Success: {result.get('success')}")
             return result
             
         except Exception as e:
-            logger.error(f"Workflow execution failed: {str(e)}")
+            logger.error(f"Workflow execution failed for {platform}: {str(e)}")
             return {
                 "success": False,
                 "error_message": f"工作流执行失败: {str(e)}",
@@ -437,5 +472,5 @@ class ImageGenerationWorkflow:
                 "quality_scores": [],
                 "selected_image": None,
                 "iteration_count": 0,
-                "metadata": {}
+                "metadata": {"platform": platform}
             }

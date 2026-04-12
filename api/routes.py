@@ -1,11 +1,13 @@
 """
 FastAPI路由定义
+支持电商平台特定规范
 """
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import List, Optional
 import uuid
 import time
 from datetime import datetime
+from loguru import logger
 
 from models.schemas import (
     ImageGenerationRequest,
@@ -14,13 +16,15 @@ from models.schemas import (
     TaskInfo,
     TaskStatus,
     ProductInfo,
-    GenerationMode
+    GenerationMode,
+    PlatformType
 )
 from agents.product_analyst import ProductAnalystAgent
 from agents.prompt_engineer import PromptEngineerAgent
 from agents.image_creator import ImageCreatorAgent
 from agents.quality_reviewer import QualityReviewerAgent
 from crewai import Crew, Process, Task
+from config.settings import settings
 
 router = APIRouter()
 
@@ -31,7 +35,7 @@ task_store = {}
 @router.post("/generate", response_model=ImageGenerationResult)
 async def generate_image(request: ImageGenerationRequest):
     """
-    生成电商图片
+    生成电商图片（支持多平台规范）
     
     Args:
         request: 图片生成请求
@@ -40,6 +44,8 @@ async def generate_image(request: ImageGenerationRequest):
         生成结果
     """
     try:
+        platform = request.platform.value
+        
         # 创建团队
         analyst = ProductAnalystAgent()
         engineer = PromptEngineerAgent()
@@ -59,7 +65,7 @@ async def generate_image(request: ImageGenerationRequest):
             )
             tasks.append(analysis_task)
         
-        # 任务2: 优化提示词
+        # 任务2: 优化提示词（传入平台参数）
         prompt_context = f"""
 产品信息:
 - 名称: {request.product_info.name}
@@ -69,6 +75,7 @@ async def generate_image(request: ImageGenerationRequest):
 - 卖点: {', '.join(request.product_info.key_features) if request.product_info.key_features else '未指定'}
 
 生成模式: {request.mode.value}
+目标平台: {platform.upper()}
 {f'风格偏好: {request.style_preference}' if request.style_preference else ''}
 """
         
@@ -76,22 +83,25 @@ async def generate_image(request: ImageGenerationRequest):
             prompt_context += f"\n参考分析: {{analysis_task.output}}"
         
         prompt_task = Task(
-            description=f"为产品生成优化的AI绘画提示词:\n{prompt_context}",
+            description=f"为{platform.upper()}平台生成优化的AI绘画提示词:\n{prompt_context}",
             agent=engineer,
             context=tasks if tasks else [],
-            expected_output="包含positive和negative prompt的结构化JSON"
+            expected_output="包含positive和negative prompt的结构化JSON，符合平台规范"
         )
         tasks.append(prompt_task)
         
-        # 任务3: 生成图片 (调用LangGraph工作流)
+        # 任务3: 生成图片 (调用LangGraph工作流，传入平台参数)
         generation_task = Task(
             description=f"""
-使用工作流生成电商图片:
+使用工作流为{platform.upper()}平台生成电商图片:
 - 提示词: {{prompt_task.output}}
 - 参考图片: {request.product_info.reference_image_url or '无'}
 - 生成模式: {request.mode.value}
+- 目标平台: {platform}
 - 质量阈值: {request.quality_threshold}
 - 最大重试: {request.max_retries}
+
+注意：必须符合{platform.upper()}平台的图片规范要求。
 """,
             agent=creator,
             context=[prompt_task],
@@ -99,12 +109,12 @@ async def generate_image(request: ImageGenerationRequest):
         )
         tasks.append(generation_task)
         
-        # 任务4: 质量审核
+        # 任务4: 质量审核（传入平台参数）
         review_task = Task(
-            description="审核生成的图片质量并给出评估报告",
+            description=f"审核生成的图片质量，确保符合{platform.upper()}平台规范并给出评估报告",
             agent=reviewer,
             context=[generation_task],
-            expected_output="质量评估报告JSON"
+            expected_output="质量评估报告JSON，包含平台合规性检查"
         )
         tasks.append(review_task)
         
@@ -119,7 +129,6 @@ async def generate_image(request: ImageGenerationRequest):
         
         result = crew.kickoff()
         
-        # 解析结果
         # TODO: 更完善的结果解析
         return ImageGenerationResult(
             success=True,
@@ -127,6 +136,7 @@ async def generate_image(request: ImageGenerationRequest):
             selected_image=None,
             quality_scores=[],
             iteration_count=0,
+            platform=platform,
             metadata={"raw_result": str(result)}
         )
         
@@ -137,7 +147,7 @@ async def generate_image(request: ImageGenerationRequest):
 @router.post("/generate/async", response_model=TaskInfo)
 async def generate_image_async(request: ImageGenerationRequest, background_tasks: BackgroundTasks):
     """
-    异步生成电商图片
+    异步生成电商图片（支持多平台规范）
     
     Args:
         request: 图片生成请求
@@ -188,14 +198,32 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
+@router.get("/platforms")
+async def get_platform_presets():
+    """
+    获取所有支持的平台预设配置
+    
+    Returns:
+        平台配置字典
+    """
+    return {
+        "platforms": settings.PLATFORM_PRESETS,
+        "supported_platforms": list(settings.PLATFORM_PRESETS.keys())
+    }
+
+
 async def process_generation_task(task_id: str, request: ImageGenerationRequest):
     """
-    后台处理生成任务
+    后台处理生成任务（支持多平台规范）
     
     Args:
         task_id: 任务ID
         request: 生成请求
     """
+    import time
+    start_time = time.time()
+    platform = request.platform.value
+    
     try:
         # 更新状态为处理中
         task_store[task_id].status = TaskStatus.PROCESSING
@@ -203,12 +231,131 @@ async def process_generation_task(task_id: str, request: ImageGenerationRequest)
         task_store[task_id].current_step = "初始化Agent"
         task_store[task_id].updated_at = datetime.now().isoformat()
         
-        # TODO: 实现实际的生成逻辑
-        # 这里简化处理，实际应该调用CrewAI + LangGraph
+        # 创建团队
+        analyst = ProductAnalystAgent()
+        engineer = PromptEngineerAgent()
+        creator = ImageCreatorAgent()
+        reviewer = QualityReviewerAgent()
         
-        await simulate_generation(task_id)
+        tasks = []
+        
+        # 任务1: 分析参考产品 (如果有)
+        if request.product_info.reference_image_url:
+            task_store[task_id].current_step = "分析参考图片"
+            task_store[task_id].progress = 20.0
+            task_store[task_id].updated_at = datetime.now().isoformat()
+            
+            analysis_task = Task(
+                description=f"""分析参考图片的视觉特征: {request.product_info.reference_image_url}
+                
+请提取配色方案、构图风格、光影效果等关键设计元素。""",
+                agent=analyst,
+                expected_output="结构化的产品视觉分析报告"
+            )
+            tasks.append(analysis_task)
+        
+        # 任务2: 优化提示词
+        task_store[task_id].current_step = "优化提示词"
+        task_store[task_id].progress = 35.0
+        task_store[task_id].updated_at = datetime.now().isoformat()
+        
+        prompt_context = f"""
+产品信息:
+- 名称: {request.product_info.name}
+- 描述: {request.product_info.description}
+- 类别: {request.product_info.category or '未指定'}
+- 目标人群: {request.product_info.target_audience or '未指定'}
+- 卖点: {', '.join(request.product_info.key_features) if request.product_info.key_features else '未指定'}
+
+生成模式: {request.mode.value}
+目标平台: {platform.upper()}
+{f'风格偏好: {request.style_preference}' if request.style_preference else ''}
+"""
+        
+        if request.product_info.reference_image_url:
+            prompt_context += f"\n参考分析: {{analysis_task.output}}"
+        
+        prompt_task = Task(
+            description=f"为{platform.upper()}平台生成优化的AI绘画提示词:\n{prompt_context}",
+            agent=engineer,
+            context=tasks if tasks else [],
+            expected_output="包含positive和negative prompt的结构化JSON，符合平台规范"
+        )
+        tasks.append(prompt_task)
+        
+        # 任务3: 生成图片 (调用LangGraph工作流)
+        task_store[task_id].current_step = "生成图片"
+        task_store[task_id].progress = 50.0
+        task_store[task_id].updated_at = datetime.now().isoformat()
+        
+        generation_task = Task(
+            description=f"""
+使用工作流为{platform.upper()}平台生成电商图片:
+- 提示词: {{prompt_task.output}}
+- 参考图片: {request.product_info.reference_image_url or '无'}
+- 生成模式: {request.mode.value}
+- 目标平台: {platform}
+- 质量阈值: {request.quality_threshold}
+- 最大重试: {request.max_retries}
+
+注意：必须符合{platform.upper()}平台的图片规范要求。
+""",
+            agent=creator,
+            context=[prompt_task],
+            expected_output="生成的图片URL和质量评分JSON"
+        )
+        tasks.append(generation_task)
+        
+        # 任务4: 质量审核
+        task_store[task_id].current_step = "质量审核"
+        task_store[task_id].progress = 80.0
+        task_store[task_id].updated_at = datetime.now().isoformat()
+        
+        review_task = Task(
+            description=f"审核生成的图片质量，确保符合{platform.upper()}平台规范并给出评估报告",
+            agent=reviewer,
+            context=[generation_task],
+            expected_output="质量评估报告JSON，包含平台合规性检查"
+        )
+        tasks.append(review_task)
+        
+        # 组建团队并执行
+        crew = Crew(
+            agents=[analyst, engineer, creator, reviewer] if request.product_info.reference_image_url 
+                   else [engineer, creator, reviewer],
+            tasks=tasks,
+            process=Process.sequential,
+            verbose=2
+        )
+        
+        result = crew.kickoff()
+        
+        # 计算耗时
+        generation_time = time.time() - start_time
+        
+        # TODO: 更完善的结果解析 - 从CrewAI结果中提取实际数据
+        # 目前先返回基础结构
+        task_store[task_id].status = TaskStatus.COMPLETED
+        task_store[task_id].progress = 100.0
+        task_store[task_id].current_step = "完成"
+        task_store[task_id].result = ImageGenerationResult(
+            success=True,
+            images=[],  # 需要从result.raw输出中解析
+            selected_image=None,
+            quality_scores=[],
+            iteration_count=0,
+            platform=platform,
+            metadata={
+                "generation_time": generation_time,
+                "model_version": settings.IMAGE_GENERATION_MODEL or "unknown",
+                "platform": platform,
+                "raw_result": str(result)[:500]  # 截取前500字符避免过长
+            }
+        )
+        task_store[task_id].updated_at = datetime.now().isoformat()
         
     except Exception as e:
+        logger.error(f"Task {task_id} failed for {platform}: {str(e)}")
         task_store[task_id].status = TaskStatus.FAILED
         task_store[task_id].error_message = str(e)
         task_store[task_id].updated_at = datetime.now().isoformat()
@@ -258,6 +405,7 @@ async def simulate_generation(task_id: str):
         ),
         quality_scores=[0.85],
         iteration_count=1,
+        platform="default",
         metadata={
             "generation_time": 12.5,
             "model_version": "sd-webui-v1.0"
