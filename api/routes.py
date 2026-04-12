@@ -257,6 +257,10 @@ async def simulate_generation(task_id: str):
             format="png"
         ),
         quality_scores=[0.85],
-        iteration_count=1
+        iteration_count=1,
+        metadata={
+            "generation_time": 12.5,
+            "model_version": "sd-webui-v1.0"
+        }
     )
     task_store[task_id].updated_at = datetime.now().isoformat()

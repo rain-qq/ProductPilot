@@ -1,277 +1,188 @@
 # ProductPilot 快速启动指南
 
-## 🚀 5分钟快速开始
+## 🚀 5分钟快速上手
 
 ### 前置要求
 
-1. ✅ Python 3.9+
-2. ✅ Docker Desktop (运行 MinIO)
-3. ✅ Stable Diffusion WebUI (可选,用于本地生图)
-4. ✅ LLM API Key (OpenAI 或 Google Gemini)
+确保已安装:
+- ✅ Python 3.9+
+- ✅ Node.js 18+ 
+- ✅ pnpm (`npm install -g pnpm`)
+- ✅ MinIO (用于图片存储)
 
----
-
-## 📦 安装步骤
-
-### 1. 克隆项目
+### 第一步: 克隆项目
 
 ```bash
 git clone <your-repo-url>
 cd ProductPilot
 ```
 
-### 2. 安装依赖
+### 第二步: 配置环境变量
 
+```bash
+# 复制环境配置文件
+cp .env.example .env
+
+# 编辑 .env 文件,至少配置以下项:
+# - OPENAI_API_KEY 或 GOOGLE_API_KEY
+# - MINIO_ENDPOINT=localhost:9000
+# - MINIO_ACCESS_KEY=minioadmin
+# - MINIO_SECRET_KEY=minioadmin
+```
+
+### 第三步: 启动 MinIO (如未运行)
+
+```bash
+# 使用 Docker (推荐)
+docker run -p 9000:9000 -p 9001:9001 \
+  --name minio \
+  -e "MINIO_ROOT_USER=minioadmin" \
+  -e "MINIO_ROOT_PASSWORD=minioadmin" \
+  minio/minio server /data --console-address ":9001"
+
+# 或直接下载 MinIO 二进制文件运行
+```
+
+访问 MinIO 控制台: http://localhost:9001  
+默认账号/密码: `minioadmin` / `minioadmin`
+
+### 第四步: 安装依赖
+
+**后端:**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 配置环境变量
-
+**前端:**
 ```bash
-# Windows
-copy .env.example .env
-
-# Linux/Mac
-cp .env.example .env
+cd frontend
+pnpm install
+cd ..
 ```
 
-编辑 `.env` 文件,填入你的 API Key:
+### 第五步: 启动服务
 
-```bash
-# 选择一种 LLM 提供商
-OPENAI_API_KEY=sk-your-openai-key
-# 或
-GOOGLE_API_KEY=your-gemini-key
-GEMINI_MODEL=gemini-pro
-```
+**方式1: 分别启动 (推荐用于开发)**
 
-### 4. 启动 MinIO (Docker)
-
-```bash
-docker run -d \
-  -p 9000:9000 \
-  -p 9001:9001 \
-  --name minio \
-  -v minio_data:/data \
-  -e "MINIO_ROOT_USER=minioadmin" \
-  -e "MINIO_ROOT_PASSWORD=minioadmin" \
-  minio/minio server /data --console-address ":9001"
-```
-
-**验证 MinIO:**
-- API: http://localhost:9000
-- 控制台: http://localhost:9001 (账号: minioadmin/minioadmin)
-
-### 5. (可选) 启动 Stable Diffusion WebUI
-
-如果使用本地 SD,确保 WebUI 正在运行并开启 API 模式:
-
-```bash
-# 在 SD WebUI 目录执行
-./webui.sh --api  # Linux/Mac
-webui.bat --api   # Windows
-```
-
-默认地址: http://localhost:7860
-
----
-
-## ▶️ 启动服务
-
-### 方式 1: 直接运行
-
+终端1 - 后端:
 ```bash
 python main.py
 ```
 
-### 方式 2: 使用启动脚本
+终端2 - 前端:
+```bash
+# Windows
+start-frontend.bat
 
+# Linux/Mac
+./start-frontend.sh
+```
+
+**方式2: 一键启动**
 ```bash
 # Windows
 start.bat
 
 # Linux/Mac
-chmod +x start.sh
 ./start.sh
 ```
 
-服务将在 **http://localhost:8000** 启动
+### 第六步: 访问应用
 
----
+- 🌐 **前端界面**: http://localhost:5173
+- 📚 **API文档**: http://localhost:8000/docs
+- 💾 **MinIO控制台**: http://localhost:9001
 
-## 🧪 测试功能
+## 🎯 第一次生成图片
 
-### 1. 访问 API 文档
-
-浏览器打开: **http://localhost:8000/docs**
-
-### 2. 健康检查
-
-```bash
-curl http://localhost:8000/health
-```
-
-预期输出:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-04-12T19:00:00.000000"
-}
-```
-
-### 3. 测试 MinIO 存储
-
-```bash
-python test_minio.py
-```
-
-预期看到:
-```
-✅ MinIO 客户端初始化成功
-✅ Bucket 'ecommerce-images' 已存在
-✅ 上传成功!
-```
-
-### 4. 生成第一张图片
-
-#### 方法 A: 使用 Swagger UI
-
-1. 访问 http://localhost:8000/docs
-2. 找到 `POST /generate/async` 接口
-3. 点击 "Try it out"
-4. 填写请求体:
-
-```json
-{
-  "product_info": {
-    "name": "无线蓝牙耳机",
-    "description": "高品质降噪无线蓝牙耳机,续航时间长达30小时",
-    "category": "数码配件",
-    "key_features": ["主动降噪", "长续航", "舒适佩戴"]
-  },
-  "mode": "text2img",
-  "num_images": 2,
-  "quality_threshold": 0.8
-}
-```
-
-5. 点击 "Execute"
-6. 记录返回的 `task_id`
-7. 使用 `GET /task/{task_id}` 查询结果
-
-#### 方法 B: 使用 cURL
-
-```bash
-curl -X POST "http://localhost:8000/generate/async" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "product_info": {
-      "name": "智能手表",
-      "description": "多功能运动智能手表",
-      "category": "智能穿戴",
-      "key_features": ["心率监测", "防水设计"]
-    },
-    "mode": "text2img",
-    "num_images": 2
-  }'
-```
-
-#### 方法 C: 使用示例脚本
-
-```bash
-python examples/basic_usage.py
-```
-
----
-
-## 📸 查看生成的图片
-
-### 方法 1: MinIO 控制台
-
-1. 访问 http://localhost:9001
-2. 登录 (minioadmin/minioadmin)
-3. 进入 `ecommerce-images` bucket
-4. 查看所有生成的图片
-
-### 方法 2: 直接访问 URL
-
-从 API 响应中获取图片 URL:
-
-```
-http://localhost:9000/ecommerce-images/20260412_190326_a3f2b1c4.png
-```
-
-在浏览器中打开即可查看。
-
----
+1. 打开浏览器访问 http://localhost:5173
+2. 在表单中填写:
+   - **商品名称**: 例如 "无线蓝牙耳机"
+   - **商品描述**: 详细描述产品特点
+   - **核心卖点**: 添加几个关键特性
+3. 选择生成模式 (推荐 "混合模式")
+4. 点击 "开始生成"
+5. 等待处理完成 (约30-60秒)
+6. 查看生成的图片并下载
 
 ## 🔍 故障排查
 
-### 问题 1: MinIO 连接失败
+### 问题1: 前端无法连接后端
 
-**症状:**
+**症状**: 提交表单后显示网络错误
+
+**解决**:
+1. 确认后端服务正在运行 (`python main.py`)
+2. 检查 `frontend/.env` 中的 `VITE_API_BASE_URL=http://localhost:8000`
+3. 重启前端开发服务器
+
+### 问题2: MinIO 连接失败
+
+**症状**: 生成图片时报错 "MinIO connection failed"
+
+**解决**:
+1. 确认 MinIO 服务正在运行
+2. 检查 `.env` 中的 MinIO 配置是否正确
+3. 访问 http://localhost:9001 测试 MinIO 控制台
+4. 确保 bucket `ecommerce-images` 已创建 (首次会自动创建)
+
+### 问题3: API Key 未配置
+
+**症状**: 报错 "API key not found" 或 "Authentication failed"
+
+**解决**:
+1. 检查 `.env` 文件中是否配置了 `OPENAI_API_KEY` 或 `GOOGLE_API_KEY`
+2. 确保 API Key 有效且有足够余额
+3. 重启后端服务使配置生效
+
+### 问题4: 端口被占用
+
+**症状**: 启动时报错 "Address already in use"
+
+**解决**:
+```bash
+# Windows - 查找并关闭占用端口的进程
+netstat -ano | findstr :8000
+taskkill /PID <PID> /F
+
+# Linux/Mac
+lsof -ti:8000 | xargs kill -9
 ```
-❌ MinIO 客户端未初始化
+
+或修改端口:
+- 后端: 编辑 `main.py` 中的 `port` 参数
+- 前端: 编辑 `frontend/vite.config.ts` 添加 `server: { port: 5174 }`
+
+### 问题5: pnpm 未安装
+
+**症状**: 命令找不到 pnpm
+
+**解决**:
+```bash
+npm install -g pnpm
 ```
 
-**解决方案:**
-1. 检查 Docker 容器是否运行:
-   ```bash
-   docker ps | grep minio
-   ```
-2. 如果未运行,重新启动 MinIO
-3. 检查端口 9000 是否被占用
+## 📖 更多资源
 
-### 问题 2: SD WebUI 连接失败
+- 📘 [完整API文档](./API_DOCUMENTATION.md)
+- 🏗️ [架构说明](./ARCHITECTURE.md)
+- 🎨 [前端开发指南](./frontend/README.md)
+- 💾 [MinIO使用指南](./MINIO_GUIDE.md)
 
-**症状:**
-```
-Error in text_to_image: Connection refused
-```
+## 💡 小贴士
 
-**解决方案:**
-1. 确保 SD WebUI 正在运行
-2. 检查 `.env` 中的 `SD_WEBUI_URL` 配置
-3. 确认 WebUI 已启用 API 模式 (`--api` 参数)
-
-### 问题 3: LLM API 调用失败
-
-**症状:**
-```
-OpenAI API error: Invalid API key
-```
-
-**解决方案:**
-1. 检查 `.env` 中的 API Key 是否正确
-2. 确认账户余额充足
-3. 如使用 Gemini,确保安装了 `langchain-google-genai`
-
-### 问题 4: 图片生成质量低
-
-**优化建议:**
-1. 提高 `quality_threshold` (0.85-0.95)
-2. 增加 `max_retries` (3-5)
-3. 提供更详细的产品描述
-4. 使用参考图片 (img2img 模式)
-
----
-
-## 📚 下一步
-
-- 📖 阅读 [API 文档](./API_DOCUMENTATION.md) 了解所有接口
-- 🗄️ 查看 [MinIO 使用指南](./MINIO_GUIDE.md) 管理图片存储
-- 🏗️ 了解 [系统架构](./ARCHITECTURE.md)
-- 💡 查看更多 [使用示例](./examples/)
-
----
+1. **首次运行较慢**: 首次生成图片需要加载模型,请耐心等待
+2. **调整质量阈值**: 如果生成时间过长,可降低 `QUALITY_THRESHOLD` (建议 0.75-0.85)
+3. **批量生成**: 使用异步接口可同时处理多个任务
+4. **查看日志**: 后端日志会输出详细的处理步骤和错误信息
+5. **清除缓存**: 如遇奇怪问题,尝试删除 `frontend/node_modules` 后重新 `pnpm install`
 
 ## 🆘 获取帮助
 
-- 📝 查看 [常见问题](./API_DOCUMENTATION.md#-常见问题)
-- 🐛 提交 GitHub Issue
-- 📧 联系技术支持
+- 查看 [常见问题](./README.md#-常见问题)
+- 提交 [GitHub Issue](https://github.com/your-repo/ProductPilot/issues)
+- 查看后端控制台日志了解详细错误
 
 ---
 
-**祝你使用愉快! 🎉**
+祝你使用愉快! 🎉
