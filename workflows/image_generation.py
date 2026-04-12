@@ -313,27 +313,47 @@ class ImageGenerationWorkflow:
                 # 应用增强
                 enhanced_image = self.image_service.enhance(best_image)
                 
+                # 上传所有生成的图片到 MinIO
+                uploaded_urls = []
+                for img in state["generated_images"]:
+                    try:
+                        url = self.image_service.upload_to_minio(img)
+                        uploaded_urls.append(url)
+                    except Exception as e:
+                        logger.error(f"Failed to upload image: {str(e)}")
+                        uploaded_urls.append(img)  # 失败时使用原数据
+                
+                # 上传最佳图片
+                selected_url = self.image_service.upload_to_minio(enhanced_image)
+                
                 logger.info(f"Selected and enhanced best image (score: {max(quality_scores):.2f})")
+                logger.info(f"Uploaded {len(uploaded_urls)} images to MinIO")
                 
                 return {
-                    "selected_image": enhanced_image,
+                    "generated_images": uploaded_urls,  # 更新为 MinIO URL
+                    "selected_image": selected_url,
                     "success": True,
                     "metadata": {
                         **state.get("metadata", {}),
                         "total_iterations": state["iteration_count"],
                         "best_quality_score": max(quality_scores),
-                        "post_processing": "completed"
+                        "post_processing": "completed",
+                        "storage_type": "minio",
+                        "image_urls": uploaded_urls
                     }
                 }
             else:
                 # 没有评分，返回第一张
+                first_url = self.image_service.upload_to_minio(state["generated_images"][0])
                 return {
-                    "selected_image": state["generated_images"][0],
+                    "generated_images": [first_url],
+                    "selected_image": first_url,
                     "success": True,
                     "quality_scores": [0.5],
                     "metadata": {
                         **state.get("metadata", {}),
-                        "post_processing": "no_quality_data"
+                        "post_processing": "no_quality_data",
+                        "storage_type": "minio"
                     }
                 }
         

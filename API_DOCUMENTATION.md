@@ -29,7 +29,7 @@ ProductPilot 是一个基于 AI 的智能电商图片生成系统,提供 RESTful
 **请求参数**: 无
 
 **响应示例**:
-```json
+``json
 {
   "status": "healthy",
   "timestamp": "2026-04-12T18:44:59.123456"
@@ -96,7 +96,7 @@ Content-Type: application/json
 | `custom_settings` | object | ❌ | 自定义设置 |
 
 **响应示例**(成功):
-```json
+``json
 {
   "success": true,
   "images": [
@@ -164,7 +164,7 @@ Content-Type: application/json
 ```
 
 **响应示例**(失败):
-```json
+``json
 {
   "detail": "图片生成失败: API调用超时"
 }
@@ -190,7 +190,7 @@ Content-Type: application/json
 **请求体**: 与 `/generate` 接口相同
 
 **响应示例**:
-```json
+``json
 {
   "task_id": "a3f2b1c4-5d6e-7f8g-9h0i-1j2k3l4m5n6o",
   "status": "pending",
@@ -220,7 +220,7 @@ Content-Type: application/json
 - `task_id` (string, 必填): 任务ID
 
 **响应示例**(处理中):
-```json
+``json
 {
   "task_id": "a3f2b1c4-5d6e-7f8g-9h0i-1j2k3l4m5n6o",
   "status": "processing",
@@ -234,7 +234,7 @@ Content-Type: application/json
 ```
 
 **响应示例**(已完成):
-```json
+``json
 {
   "task_id": "a3f2b1c4-5d6e-7f8g-9h0i-1j2k3l4m5n6o",
   "status": "completed",
@@ -275,7 +275,7 @@ Content-Type: application/json
 ```
 
 **响应示例**(失败):
-```json
+``json
 {
   "task_id": "a3f2b1c4-5d6e-7f8g-9h0i-1j2k3l4m5n6o",
   "status": "failed",
@@ -312,7 +312,7 @@ Content-Type: application/json
 ### 使用 cURL 测试
 
 #### 1. 同步生成
-```bash
+```
 curl -X POST "http://localhost:8000/generate" \
   -H "Content-Type: application/json" \
   -d '{
@@ -329,7 +329,7 @@ curl -X POST "http://localhost:8000/generate" \
 ```
 
 #### 2. 异步生成
-```bash
+```
 curl -X POST "http://localhost:8000/generate/async" \
   -H "Content-Type: application/json" \
   -d '{
@@ -344,13 +344,13 @@ curl -X POST "http://localhost:8000/generate/async" \
 ```
 
 #### 3. 查询任务状态
-```bash
+```
 curl -X GET "http://localhost:8000/task/a3f2b1c4-5d6e-7f8g-9h0i-1j2k3l4m5n6o"
 ```
 
 ### 使用 Python requests 测试
 
-```python
+```
 import requests
 import time
 
@@ -505,10 +505,27 @@ python main.py
 - **同步接口** (`/generate`): 等待生成完成后返回,适合单次或少量生成
 - **异步接口** (`/generate/async`): 立即返回任务ID,需轮询查询结果,适合批量处理
 
-### Q3: 任务会保存多久?
-**A**: 当前版本任务存储在内存中,服务重启后会丢失。生产环境建议使用数据库持久化。
+### Q3: 生成的图片存储在哪里?
+**A**: 系统使用 **MinIO 对象存储**保存生成的图片。
+- **存储位置**: MinIO Bucket (`ecommerce-images`)
+- **访问方式**: 通过 HTTP URL 直接访问
+- **URL 格式**: `http://localhost:9000/ecommerce-images/{filename}`
+- **文件命名**: `{timestamp}_{uuid}.png` (例如: `20260412_185931_a3f2b1c4.png`)
+- **查看管理**: 访问 MinIO 控制台 http://localhost:9001 (默认账号: minioadmin/minioadmin)
 
-### Q4: 如何调整生成图片的尺寸?
+**配置说明**:
+在 `.env` 文件中配置 MinIO:
+```bash
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET_NAME=ecommerce-images
+```
+
+### Q4: 任务会保存多久?
+**A**: 当前版本任务存储在内存中,服务重启后会丢失。**但生成的图片已持久化到 MinIO**,不会丢失。生产环境建议使用数据库持久化任务状态。
+
+### Q5: 如何调整生成图片的尺寸?
 **A**: 通过 `custom_settings` 传递参数,例如:
 ```json
 {
@@ -520,8 +537,34 @@ python main.py
 }
 ```
 
-### Q5: 支持哪些图片格式?
+### Q6: 支持哪些图片格式?
 **A**: 目前支持 PNG、JPG、WEBP 格式,默认为 PNG。
+
+### Q7: 如何清理旧图片?
+**A**: 
+1. **通过 MinIO 控制台**: 访问 http://localhost:9001,手动删除
+2. **通过 API**: 调用 `ImageService.delete_from_minio(object_name)` 方法
+3. **批量清理**: 编写脚本定期清理过期图片
+
+---
+
+## 🗄️ 图片存储架构
+
+### 存储流程
+```
+SD WebUI 生成 → Base64 Data URL → 上传到 MinIO → 返回 HTTP URL
+```
+
+### 优势
+- ✅ **持久化存储**: 图片不会因为服务重启而丢失
+- ✅ **高性能访问**: MinIO 提供高速对象存储
+- ✅ **易于扩展**: 可轻松迁移到云存储 (AWS S3 / 阿里云 OSS)
+- ✅ **统一管理**: 所有图片集中在一个 Bucket 中
+
+### 注意事项
+- MinIO 服务需要独立运行 (Docker 或本地部署)
+- 确保 `.env` 中的 MinIO 配置正确
+- 生产环境建议启用 HTTPS 和认证
 
 ---
 

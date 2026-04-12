@@ -7,9 +7,19 @@ from PIL import Image
 from io import BytesIO
 from typing import List, Dict, Any, Optional
 import numpy as np
+import uuid
+from datetime import datetime
 
 from config.settings import settings
 from loguru import logger
+
+try:
+    from minio import Minio
+    from minio.error import S3Error
+    MINIO_AVAILABLE = True
+except ImportError:
+    MINIO_AVAILABLE = False
+    logger.warning("MinIO library not installed. Install with: pip install minio")
 
 
 class ImageService:
@@ -17,6 +27,141 @@ class ImageService:
     
     def __init__(self):
         self.sd_api_url = f"{settings.SD_WEBUI_URL}/sdapi/v1"
+        
+        # 初始化 MinIO 客户端
+        if MINIO_AVAILABLE:
+            try:
+                self.minio_client = Minio(
+                    settings.MINIO_ENDPOINT,
+                    access_key=settings.MINIO_ACCESS_KEY,
+                    secret_key=settings.MINIO_SECRET_KEY,
+                    secure=False  # 本地开发使用 HTTP
+                )
+                # 确保 bucket 存在
+                self._ensure_bucket_exists()
+                logger.info(f"MinIO client initialized successfully. Bucket: {settings.MINIO_BUCKET_NAME}")
+            except Exception as e:
+                logger.error(f"Failed to initialize MinIO client: {str(e)}")
+                self.minio_client = None
+        else:
+            self.minio_client = None
+            logger.warning("MinIO storage disabled - library not available")
+    
+    def _ensure_bucket_exists(self):
+        """确保 MinIO bucket 存在"""
+        try:
+            if not self.minio_client.bucket_exists(settings.MINIO_BUCKET_NAME):
+                self.minio_client.make_bucket(settings.MINIO_BUCKET_NAME)
+                logger.info(f"Created bucket: {settings.MINIO_BUCKET_NAME}")
+            else:
+                logger.debug(f"Bucket already exists: {settings.MINIO_BUCKET_NAME}")
+        except Exception as e:
+            logger.error(f"Error ensuring bucket exists: {str(e)}")
+            raise
+    
+    def upload_to_minio(self, image_data: str, filename: Optional[str] = None) -> str:
+        """
+        上传图片到 MinIO
+        
+        Args:
+            image_data: 图片数据 (base64 Data URL 或 bytes)
+            filename: 文件名 (可选,自动生成)
+            
+        Returns:
+            图片访问 URL
+        """
+        if not self.minio_client:
+            logger.warning("MinIO client not available, returning data URL")
+            return image_data
+        
+        try:
+            # 生成唯一文件名
+            if not filename:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                unique_id = str(uuid.uuid4())[:8]
+                filename = f"{timestamp}_{unique_id}.png"
+            
+            # 处理 base64 Data URL
+            if isinstance(image_data, str) and image_data.startswith("data:"):
+                # 提取 base64 部分
+                base64_data = image_data.split(",")[1]
+                image_bytes = base64.b64decode(base64_data)
+            elif isinstance(image_data, str):
+                # 纯 base64
+                image_bytes = base64.b64decode(image_data)
+            else:
+                image_bytes = image_data
+            
+            # 上传到 MinIO
+            content_type = "image/png"
+            if filename.endswith(".jpg") or filename.endswith(".jpeg"):
+                content_type = "image/jpeg"
+            elif filename.endswith(".webp"):
+                content_type = "image/webp"
+            
+            self.minio_client.put_object(
+                bucket_name=settings.MINIO_BUCKET_NAME,
+                object_name=filename,
+                data=BytesIO(image_bytes),
+                length=len(image_bytes),
+                content_type=content_type
+            )
+            
+            # 构建访问 URL
+            url = f"http://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET_NAME}/{filename}"
+            logger.info(f"Image uploaded to MinIO: {url}")
+            
+            return url
+            
+        except S3Error as e:
+            logger.error(f"MinIO upload error: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error uploading to MinIO: {str(e)}")
+            # 失败时返回原始数据 URL
+            return image_data
+    
+    def upload_multiple_images(self, images: List[str]) -> List[str]:
+        """
+        批量上传图片到 MinIO
+        
+        Args:
+            images: 图片列表 (base64 Data URLs)
+            
+        Returns:
+            图片 URL 列表
+        """
+        urls = []
+        for i, img in enumerate(images):
+            try:
+                url = self.upload_to_minio(img)
+                urls.append(url)
+            except Exception as e:
+                logger.error(f"Failed to upload image {i+1}: {str(e)}")
+                urls.append(img)  # 失败时保留原数据
+        
+        return urls
+    
+    def delete_from_minio(self, object_name: str) -> bool:
+        """
+        从 MinIO 删除图片
+        
+        Args:
+            object_name: 对象名称 (文件名)
+            
+        Returns:
+            是否删除成功
+        """
+        if not self.minio_client:
+            return False
+        
+        try:
+            self.minio_client.remove_object(settings.MINIO_BUCKET_NAME, object_name)
+            logger.info(f"Deleted object from MinIO: {object_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting from MinIO: {str(e)}")
+            return False
     
     def text_to_image(
         self,
