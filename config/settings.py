@@ -9,8 +9,10 @@ class Settings(BaseSettings):
     """应用配置"""
     
     # API Keys
-    OPENAI_API_KEY: str
+    OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
+    GOOGLE_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-pro"
     ANTHROPIC_API_KEY: Optional[str] = None
     
     # Stable Diffusion

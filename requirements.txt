@@ -1,17 +1,22 @@
-# Core Frameworks
+# Core Frameworks - 修复版本兼容性
+# 注意: crewai 0.28.8 与 langgraph 0.0.69 存在 langchain-core 版本冲突
+# 解决方案: 不锁定具体版本,让依赖解析器自动选择兼容版本
 crewai==0.28.8
-langgraph==0.0.69
-langchain==0.1.13
-langchain-openai==0.0.8
+langgraph
+langchain
+langchain-openai
+langchain-google-genai
+langchain-anthropic
 
 # LLM Providers
-openai==1.14.2
-anthropic==0.21.3
+openai
+google-generativeai
+anthropic
 
 # Image Processing
 Pillow==10.2.0
 opencv-python==4.9.0.80
-rembg==2.0.54  # Background removal
+rembg==2.0.54
 numpy==1.26.4
 
 # HTTP Client
@@ -35,9 +40,9 @@ redis==5.0.3
 celery==5.3.6
 
 # Utilities
-python-dotenv==1.0.1
+python-dotenv==1.0.0
 loguru==0.7.2
 tqdm==4.66.2
 
 # Monitoring (Optional)
-langsmith==0.1.31
+langsmith
