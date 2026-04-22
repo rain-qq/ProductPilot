@@ -49,11 +49,26 @@ def example_1_text_to_image():
     
     # 任务2: 生成图片
     generation_task = Task(
-        description=f"""
-根据提示词生成电商图片：
-提示词: {{prompt_task.output}}
-生成模式: text2img
-质量阈值: 0.8
+        description="""
+作为AI绘画师，你需要根据前一个任务的输出结果来生成电商图片。
+
+## 从前一个任务获取以下信息：
+1. **positive_prompt**: 从 {prompt_task.output} 中提取 positive_prompt 字段
+2. **negative_prompt**: 从 {prompt_task.output} 中提取 negative_prompt 字段  
+3. **platform**: 从 {prompt_task.output} 中提取 platform 字段（或使用默认值 "default"）
+
+## 生成参数：
+- 参考图片: 无
+- 生成模式: text2img
+- 质量阈值: 0.8
+- 最大重试: 3
+
+## 你的任务：
+1. 解析 prompt_task 的输出JSON，提取 positive_prompt、negative_prompt 和 platform
+2. 调用 generate_with_workflow 工具，传入提取的参数
+3. 确保符合DEFAULT平台的图片规范要求
+
+注意：如果无法从上下文中提取参数，请使用合理的默认值。
 """,
         agent=creator,
         context=[prompt_task],

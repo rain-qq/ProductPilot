@@ -7,6 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from loguru import logger
 import sys
+import os
+
+# 解决Windows编码问题:设置Python使用UTF-8编码
+if os.name == 'nt':  # Windows环境
+    # 设置环境变量,让Python使用UTF-8编码处理标准输出
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    # 尝试设置控制台代码页为UTF-8 (65001)
+    try:
+        os.system('chcp 65001 >nul 2>&1')
+    except:
+        pass
 
 from config.settings import settings
 from api.routes import router

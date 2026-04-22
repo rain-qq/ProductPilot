@@ -1,5 +1,6 @@
 """
 图片服务 - 封装所有图片处理逻辑
+支持 Stable Diffusion WebUI 和 Gemini Image API
 """
 import base64
 import requests
@@ -21,12 +22,29 @@ except ImportError:
     MINIO_AVAILABLE = False
     logger.warning("MinIO library not installed. Install with: pip install minio")
 
+try:
+    import google.generativeai as genai
+    GEMINI_GENAI_AVAILABLE = True
+except ImportError:
+    GEMINI_GENAI_AVAILABLE = False
+    logger.warning("google-generativeai library not installed. Install with: pip install google-generativeai")
+
 
 class ImageService:
-    """图片处理服务"""
+    """图片处理服务 - 支持 SD WebUI 和 Gemini Image API"""
     
     def __init__(self):
-        self.sd_api_url = f"{settings.SD_WEBUI_URL}/sdapi/v1"
+        self.sd_api_url = f"{settings.SD_WEBUI_URL}/sdapi/v1" if settings.SD_WEBUI_URL else None
+        
+        # 初始化 Gemini GenAI（用于图片生成）
+        self.gemini_client = None
+        if GEMINI_GENAI_AVAILABLE and settings.GOOGLE_API_KEY:
+            try:
+                genai.configure(api_key=settings.GOOGLE_API_KEY)
+                self.gemini_client = genai
+                logger.info(f"Gemini GenAI client initialized for image generation (model: {settings.GEMINI_IMAGE_MODEL})")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemini GenAI client: {e}")
         
         # 初始化 MinIO 客户端
         if MINIO_AVAILABLE:
@@ -172,10 +190,11 @@ class ImageService:
         batch_size: int = None,
         steps: int = None,
         cfg_scale: float = None,
+        use_gemini: bool = True,  # 默认使用 Gemini
         **kwargs
     ) -> List[str]:
         """
-        文本生图 - 调用SD WebUI API
+        文本生图 - 支持 SD WebUI 和 Gemini Image API
         
         Args:
             prompt: 正向提示词
@@ -185,10 +204,19 @@ class ImageService:
             batch_size: 批量生成数量
             steps: 采样步数
             cfg_scale: CFG引导系数
+            use_gemini: 是否使用 Gemini（默认True）
             
         Returns:
             生成的图片URL列表 (base64格式)
         """
+        # 优先使用 Gemini Image API
+        if use_gemini and self.gemini_client:
+            return self._generate_with_gemini(prompt, width, height, batch_size or 1)
+        
+        # 降级到 SD WebUI
+        if not self.sd_api_url:
+            raise ValueError("SD WebUI URL not configured and Gemini is unavailable")
+        
         url = f"{self.sd_api_url}/txt2img"
         
         payload = {
@@ -217,12 +245,179 @@ class ImageService:
                 data_url = f"data:image/png;base64,{img_base64}"
                 images.append(data_url)
             
-            logger.info(f"Generated {len(images)} images successfully")
+            logger.info(f"Generated {len(images)} images successfully via SD WebUI")
             return images
             
         except Exception as e:
-            logger.error(f"Error in text_to_image: {str(e)}")
+            logger.error(f"Error in text_to_image (SD WebUI): {str(e)}")
             raise
+    
+    def _generate_with_gemini(
+        self,
+        prompt: str,
+        width: int = None,
+        height: int = None,
+        batch_size: int = 1
+    ) -> List[str]:
+        """
+        使用 Gemini Image API 生成图片
+        
+        Args:
+            prompt: 提示词
+            width: 图片宽度（用于计算宽高比）
+            height: 图片高度（用于计算宽高比）
+            batch_size: 生成数量
+            
+        Returns:
+            生成的图片 Data URL 列表
+        """
+        if not self.gemini_client:
+            raise ValueError("Gemini client not initialized")
+        
+        try:
+            # 尝试导入新版本的 types
+            try:
+                from google.genai import types
+                use_new_api = True
+                logger.info("Using new Google GenAI API (google.genai)")
+            except ImportError:
+                # 降级到旧版本 API
+                use_new_api = False
+                logger.warning("google.genai.types not available, using legacy google.generativeai API")
+            
+            # 计算宽高比
+            aspect_ratio = self._calculate_aspect_ratio(width, height)
+            
+            # 确定图片尺寸
+            image_size = self._determine_image_size(width, height)
+            
+            logger.info(f"Generating {batch_size} image(s) with Gemini ({settings.GEMINI_IMAGE_MODEL}), aspect_ratio={aspect_ratio}, size={image_size}")
+            
+            images = []
+            
+            if use_new_api:
+                # 使用新版 API (google.genai)
+                for i in range(batch_size):
+                    try:
+                        response = self.gemini_client.models.generate_content(
+                            model=settings.GEMINI_IMAGE_MODEL,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_modalities=["IMAGE"],
+                                image_config=types.ImageConfig(
+                                    aspect_ratio=aspect_ratio,
+                                    image_size=image_size
+                                )
+                            )
+                        )
+                        
+                        # 提取图片数据
+                        if response.candidates and response.candidates[0].content.parts:
+                            for part in response.candidates[0].content.parts:
+                                if hasattr(part, 'inline_data') and part.inline_data:
+                                    image_bytes = part.inline_data.data
+                                    mime_type = part.inline_data.mime_type or "image/png"
+                                    
+                                    base64_str = base64.b64encode(image_bytes).decode('utf-8')
+                                    data_url = f"data:{mime_type};base64,{base64_str}"
+                                    images.append(data_url)
+                                    
+                                    logger.info(f"Gemini generated image {i+1}/{batch_size} ({len(image_bytes)} bytes)")
+                                    break
+                        else:
+                            logger.warning(f"Gemini response has no image content for batch {i+1}")
+                            
+                    except Exception as e:
+                        logger.error(f"Failed to generate image {i+1}/{batch_size} with Gemini: {e}")
+            else:
+                # 使用旧版 API (google.generativeai)
+                import google.generativeai as genai
+                
+                print(f"\n📸 [Gemini Legacy API] Creating GenerativeModel...")
+                model = genai.GenerativeModel(settings.GEMINI_IMAGE_MODEL)
+                
+                for i in range(batch_size):
+                    try:
+                        print(f"📸 [Gemini Legacy API] Generating image {i+1}/{batch_size}...")
+                        response = model.generate_content(prompt)
+                        print(f"✅ [Gemini Legacy API] Response received")
+                        
+                        # 检查是否有图片内容
+                        if hasattr(response, 'parts'):
+                            print(f"   - Response has {len(response.parts)} parts")
+                            for j, part in enumerate(response.parts):
+                                if hasattr(part, 'inline_data'):
+                                    image_bytes = part.inline_data.data
+                                    mime_type = part.inline_data.mime_type or "image/png"
+                                    
+                                    base64_str = base64.b64encode(image_bytes).decode('utf-8')
+                                    data_url = f"data:{mime_type};base64,{base64_str}"
+                                    images.append(data_url)
+                                    
+                                    print(f"✨ [Gemini Legacy API] Generated image {i+1}/{batch_size} ({len(image_bytes)} bytes)")
+                                    logger.info(f"Gemini (legacy) generated image {i+1}/{batch_size} ({len(image_bytes)} bytes)")
+                                    break
+                                else:
+                                    print(f"   - Part {j} has no inline_data")
+                        else:
+                            print(f"⚠️ [Gemini Legacy API] Response has no parts attribute")
+                            logger.warning(f"Gemini legacy response has no image content for batch {i+1}")
+                            
+                    except Exception as e:
+                        print(f"❌ [Gemini Legacy API] Error generating image {i+1}/{batch_size}: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                        logger.error(f"Failed to generate image {i+1}/{batch_size} with Gemini (legacy): {e}")
+            
+            if not images:
+                raise ValueError("Gemini failed to generate any images")
+            
+            logger.info(f"Successfully generated {len(images)} image(s) with Gemini")
+            return images
+            
+        except ImportError as e:
+            logger.error(f"Import error: {e}. Please update google-generativeai package")
+            raise
+        except Exception as e:
+            logger.error(f"Error in Gemini image generation: {str(e)}")
+            raise
+    
+    def _calculate_aspect_ratio(self, width: int = None, height: int = None) -> str:
+        """根据宽高计算宽高比"""
+        if not width or not height:
+            return "1:1"  # 默认正方形
+        
+        ratio = width / height
+        
+        # 匹配常见的宽高比
+        if abs(ratio - 1.0) < 0.1:
+            return "1:1"
+        elif abs(ratio - 16/9) < 0.1:
+            return "16:9"
+        elif abs(ratio - 4/3) < 0.1:
+            return "4:3"
+        elif abs(ratio - 3/4) < 0.1:
+            return "3:4"
+        elif abs(ratio - 9/16) < 0.1:
+            return "9:16"
+        elif ratio > 1:
+            return "3:2"  # 横向
+        else:
+            return "2:3"  # 纵向
+    
+    def _determine_image_size(self, width: int = None, height: int = None) -> str:
+        """根据分辨率确定图片尺寸等级"""
+        if not width or not height:
+            return "1K"  # 默认
+        
+        max_dim = max(width, height)
+        
+        if max_dim >= 3840:
+            return "4K"
+        elif max_dim >= 2560:
+            return "2K"
+        else:
+            return "1K"
     
     def image_to_image(
         self,

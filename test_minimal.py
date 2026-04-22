@@ -12,13 +12,13 @@ print("ProductPilot 最小化测试")
 print("="*60)
 
 # 测试1: Python版本
-print(f"\n✅ Python版本: {sys.version}")
+print(f"\n[OK] Python版本: {sys.version}")
 
 # 测试2: 环境变量文件
 import os
 env_file = project_root / ".env"
 if env_file.exists():
-    print(f"✅ .env 文件存在")
+    print(f"[OK] .env 文件存在")
     
     # 读取并显示API Key（隐藏部分）
     with open(env_file, 'r', encoding='utf-8') as f:
@@ -26,12 +26,12 @@ if env_file.exists():
         for line in content.split('\n'):
             if line.startswith('GOOGLE_API_KEY='):
                 key = line.split('=')[1]
-                print(f"✅ Gemini API Key: {key[:15]}...")
+                print(f"[OK] Gemini API Key: {key[:15]}...")
             elif line.startswith('GEMINI_MODEL='):
                 model = line.split('=')[1]
-                print(f"✅ 模型: {model}")
+                print(f"[OK] 模型: {model}")
 else:
-    print(f"❌ .env 文件不存在")
+    print(f"[FAIL] .env 文件不存在")
 
 # 测试3: 尝试导入基础模块
 print("\n" + "="*60)
@@ -40,32 +40,32 @@ print("="*60)
 
 try:
     import pydantic
-    print(f"✅ Pydantic: {pydantic.__version__}")
+    print(f"[OK] Pydantic: {pydantic.__version__}")
 except ImportError as e:
-    print(f"❌ Pydantic未安装: {e}")
+    print(f"[FAIL] Pydantic未安装: {e}")
 
 try:
     import requests
-    print(f"✅ Requests: {requests.__version__}")
+    print(f"[OK] Requests: {requests.__version__}")
 except ImportError as e:
-    print(f"❌ Requests未安装: {e}")
+    print(f"[FAIL] Requests未安装: {e}")
 
 try:
     import crewai
-    print(f"✅ CrewAI: {crewai.__version__}")
+    print(f"[OK] CrewAI: {crewai.__version__}")
 except ImportError as e:
-    print(f"❌ CrewAI未安装: {e}")
+    print(f"[FAIL] CrewAI未安装: {e}")
 
 try:
     import langgraph
-    print(f"✅ LangGraph: 已安装")
+    print(f"[OK] LangGraph: 已安装")
 except ImportError as e:
-    print(f"❌ LangGraph未安装: {e}")
+    print(f"[FAIL] LangGraph未安装: {e}")
 
 print("\n" + "="*60)
 print("建议")
 print("="*60)
-print("\n如果看到很多 ❌，说明依赖还没安装完。")
+print("\n如果看到很多 [FAIL]，说明依赖还没安装完。")
 print("请运行以下命令：")
 print("\nWindows:")
 print("  .venv\\Scripts\\activate")

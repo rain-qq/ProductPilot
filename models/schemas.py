@@ -35,7 +35,7 @@ class ImageGenerationRequest(BaseModel):
     """图片生成请求"""
     product_info: ProductInfo
     mode: GenerationMode = Field(GenerationMode.MIXED, description="生成模式")
-    platform: PlatformType = Field(PlatformType.DEFAULT, description="目标平台 (amazon/temu/default)")
+    platform: PlatformType = Field(PlatformType.TEMU, description="目标平台 (amazon/temu/default)")
     num_images: int = Field(4, ge=1, le=10, description="生成图片数量")
     quality_threshold: float = Field(0.8, ge=0.0, le=1.0, description="质量阈值")
     max_retries: int = Field(3, ge=1, le=5, description="最大重试次数")

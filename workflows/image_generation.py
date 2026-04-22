@@ -413,7 +413,7 @@ class ImageGenerationWorkflow:
         negative_prompt: str = "",
         reference_image: Optional[str] = None,
         mode: str = "text2img",
-        platform: str = "default",
+        platform: str = "temu",
         quality_threshold: float = None,
         max_retries: int = None
     ) -> Dict[str, Any]:
@@ -432,9 +432,16 @@ class ImageGenerationWorkflow:
         Returns:
             工作流执行结果
         """
+        print(f"\n{'='*80}")
+        print(f"🚀 [LangGraph Workflow] 工作流开始执行")
+        print(f"   - mode: {mode}")
+        print(f"   - platform: {platform}")
+        print(f"   - prompt length: {len(prompt)}")
         
         # 获取平台特定的质量阈值
         platform_config = settings.PLATFORM_PRESETS.get(platform, settings.PLATFORM_PRESETS["default"])
+        print(f"   - platform_config loaded: {list(platform_config.keys())}")
+        print(f"{'='*80}\n")
         
         initial_state = {
             "prompt": prompt,

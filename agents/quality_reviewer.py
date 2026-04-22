@@ -47,7 +47,7 @@ class QualityReviewerAgent(Agent):
             image_url: str,
             requirements: str = "",
             product_type: str = "",
-            platform: str = "default"
+            platform: str = "temu"
         ) -> str:
             """
             评估图片质量（支持平台特定规范）

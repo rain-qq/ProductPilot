@@ -45,7 +45,7 @@ class PromptEngineerAgent(Agent):
             user_input: str,
             reference_analysis: Optional[str] = None,
             style_preference: Optional[str] = None,
-            platform: str = "default"
+            platform: str = "temu"
         ) -> str:
             """
             优化提示词（支持平台特定规范）
@@ -175,6 +175,10 @@ class PromptEngineerAgent(Agent):
                 
                 try:
                     result_json = json.loads(result_text.strip())
+                    
+                    # 标准化 platform 字段为小写
+                    if "platform" in result_json:
+                        result_json["platform"] = result_json["platform"].lower()
                     
                     # 添加平台合规性说明
                     result_json["platform"] = platform
